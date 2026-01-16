@@ -3,18 +3,19 @@ import pandas as pd
 import json
 import os
 import time
+from PIL import Image
 
-# --- 1. CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(
-    page_title="Mi Inventario Pro",
-    page_icon="🏠",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- 1. CONFIGURACIÓN INICIAL ---
+st.set_page_config(page_title="Mi Inventario Pro", page_icon="🏠", layout="wide")
 
-# --- 2. FUNCIONES DE PERSISTENCIA (JSON) ---
 ARCHIVO_DB = 'inventario_bodega.json'
+CARPETA_FOTOS = 'fotos_bultos' # Carpeta donde se guardarán las imagenes
 
+# Asegurar que existe la carpeta de fotos
+if not os.path.exists(CARPETA_FOTOS):
+    os.makedirs(CARPETA_FOTOS)
+
+# --- 2. FUNCIONES ---
 def cargar_datos():
     if os.path.exists(ARCHIVO_DB):
         try:
@@ -28,32 +29,36 @@ def guardar_datos(lista_inventario):
     with open(ARCHIVO_DB, 'w', encoding='utf-8') as f:
         json.dump(lista_inventario, f, indent=4, ensure_ascii=False)
 
-# Inicializar estado
+def guardar_imagen(uploaded_file, id_bulto):
+    """Guarda la imagen subida con el nombre del ID"""
+    if uploaded_file is None:
+        return None
+    
+    # Obtenemos la extensión (jpg, png, etc)
+    file_ext = uploaded_file.name.split('.')[-1]
+    nombre_archivo = f"{id_bulto}.{file_ext}"
+    ruta_completa = os.path.join(CARPETA_FOTOS, nombre_archivo)
+    
+    # Guardamos el archivo físico
+    with open(ruta_completa, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    
+    return ruta_completa
+
+def obtener_icono(tipo):
+    mapa = {"Caja": "📦", "Bolsa": "🛍️", "Maleta": "🧳", "Mueble": "🗄️", "Otro": "🔖"}
+    return mapa.get(tipo, "📦")
+
 if 'inventario' not in st.session_state:
     st.session_state.inventario = cargar_datos()
 
-# --- 3. ESTILOS Y AYUDAS VISUALES ---
-def obtener_icono(tipo):
-    """Asigna un emoji según el tipo de contenedor"""
-    mapa = {
-        "Caja": "📦",
-        "Bolsa": "🛍️",
-        "Maleta": "🧳",
-        "Mueble": "🗄️",
-        "Otro": "🔖"
-    }
-    return mapa.get(tipo, "📦")
-
-# --- 4. BARRA LATERAL (CONTROLES) ---
+# --- 3. BARRA LATERAL ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/679/679720.png", width=50)
     st.title("Gestión")
-    
     tab_add, tab_del = st.tabs(["➕ Nuevo", "🗑️ Borrar"])
     
     # --- PESTAÑA AGREGAR ---
     with tab_add:
-        st.write("Registra un nuevo bulto")
         with st.form("form_agregar", clear_on_submit=True):
             col_id, col_tipo = st.columns([1, 1])
             with col_id:
@@ -61,8 +66,11 @@ with st.sidebar:
             with col_tipo:
                 tipo_input = st.selectbox("Tipo", ["Caja", "Bolsa", "Maleta", "Mueble", "Otro"])
             
-            ubicacion_input = st.text_input("📍 Ubicación", placeholder="Ej: Estante 2 - Nivel 3")
-            contenido_input = st.text_area("📝 Contenido", placeholder="Lista de objetos...", height=100)
+            ubicacion_input = st.text_input("📍 Ubicación", placeholder="Ej: Estante 2")
+            contenido_input = st.text_area("📝 Contenido", placeholder="Lista de objetos...")
+            
+            # --- NUEVO: SUBIDA DE FOTO ---
+            foto_input = st.file_uploader("📸 Foto de referencia", type=['png', 'jpg', 'jpeg'])
             
             btn_guardar = st.form_submit_button("Guardar Item", use_container_width=True)
             
@@ -72,116 +80,95 @@ with st.sidebar:
                     if id_input in ids_existentes:
                         st.error("⚠️ El ID ya existe.")
                     else:
+                        # Guardamos la foto primero
+                        ruta_foto = guardar_imagen(foto_input, id_input)
+                        
                         nuevo = {
                             "id": id_input,
                             "tipo": tipo_input,
                             "contenido": contenido_input,
                             "ubicacion": ubicacion_input,
-                            "fecha": time.strftime("%Y-%m-%d") # Agregamos fecha de creación
+                            "ruta_foto": ruta_foto, # Guardamos la ruta en el JSON
+                            "fecha": time.strftime("%Y-%m-%d")
                         }
                         st.session_state.inventario.append(nuevo)
                         guardar_datos(st.session_state.inventario)
-                        st.toast(f"¡{id_input} guardado con éxito!", icon='✅')
-                        time.sleep(0.5)
+                        st.toast(f"¡{id_input} guardado!", icon='✅')
+                        time.sleep(1)
                         st.rerun()
                 else:
                     st.toast("Faltan datos obligatorios", icon='❌')
 
     # --- PESTAÑA BORRAR ---
     with tab_del:
-        st.write("Eliminar un bulto")
         lista_ids = [item['id'] for item in st.session_state.inventario]
-        
         if lista_ids:
-            id_borrar = st.selectbox("Seleccionar ID", lista_ids)
-            if st.button("Eliminar Definitivamente", type="primary", use_container_width=True):
+            id_borrar = st.selectbox("ID a borrar", lista_ids)
+            if st.button("Eliminar Definitivamente", type="primary"):
+                # Opcional: Borrar también la foto física para no acumular basura
+                item_a_borrar = next((x for x in st.session_state.inventario if x['id'] == id_borrar), None)
+                if item_a_borrar and item_a_borrar.get('ruta_foto'):
+                    if os.path.exists(item_a_borrar['ruta_foto']):
+                        os.remove(item_a_borrar['ruta_foto'])
+
                 st.session_state.inventario = [x for x in st.session_state.inventario if x['id'] != id_borrar]
                 guardar_datos(st.session_state.inventario)
-                st.toast(f"Item {id_borrar} eliminado", icon='🗑️')
-                time.sleep(0.5)
+                st.toast("Eliminado", icon='🗑️')
                 st.rerun()
-        else:
-            st.info("Nada que borrar.")
 
-    st.divider()
-    st.caption("v2.0 - Sistema de Bodega")
-
-# --- 5. PANEL PRINCIPAL ---
-
-# Título y Header
-st.title("🏠 Inventario de Casa")
+# --- 4. PANEL PRINCIPAL ---
+st.title("🏠 Inventario Visual")
 st.markdown("---")
 
-# Métricas (KPIs)
-if st.session_state.inventario:
-    df = pd.DataFrame(st.session_state.inventario)
-    
-    # Cálculos rápidos
-    total_bultos = len(df)
-    total_ubicaciones = df['ubicacion'].nunique()
-    ultimo_agregado = df.iloc[-1]['id'] if not df.empty else "N/A"
-
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("📦 Total Bultos", total_bultos)
-    kpi2.metric("📍 Ubicaciones", total_ubicaciones)
-    kpi3.metric("🕒 Último Agregado", ultimo_agregado)
+if not st.session_state.inventario:
+    st.info("👋 Inventario vacío. Agrega items con fotos desde la izquierda.")
 else:
-    st.info("👋 ¡Bienvenido! Empieza agregando cosas en el menú lateral.")
+    # Métricas
+    df = pd.DataFrame(st.session_state.inventario)
+    col1, col2 = st.columns(2)
+    col1.metric("Total Bultos", len(df))
+    col2.metric("Ubicaciones", df['ubicacion'].nunique())
 
-st.write("") # Espacio
+    # --- BUSCADOR VISUAL ---
+    st.divider()
+    busqueda = st.text_input("🔍 Buscar objeto (te mostraré la foto del contenedor)", placeholder="Ej: Taladro...")
 
-# --- 6. BUSCADOR Y VISUALIZACIÓN ---
-col_search, col_filter = st.columns([3, 1])
-
-with col_search:
-    busqueda = st.text_input("🔍 ¿Qué estás buscando?", placeholder="Ej: Taladro, adornos, herramientas...")
-
-# Filtrado de datos
-if st.session_state.inventario:
-    df_show = pd.DataFrame(st.session_state.inventario)
-    
-    # Crear columna visual con Icono + Tipo
-    df_show['Visual_Tipo'] = df_show['tipo'].apply(lambda x: f"{obtener_icono(x)} {x}")
-
-    # Lógica de búsqueda
     if busqueda:
+        # Filtro
         mask = (
-            df_show['contenido'].str.contains(busqueda, case=False, na=False) | 
-            df_show['id'].str.contains(busqueda, case=False, na=False)
+            df['contenido'].str.contains(busqueda, case=False, na=False) | 
+            df['id'].str.contains(busqueda, case=False, na=False)
         )
-        df_final = df_show[mask]
-        msg_result = f"✅ Se encontraron **{len(df_final)}** resultados"
+        resultados = df[mask]
+        
+        if not resultados.empty:
+            st.success(f"Encontrado en {len(resultados)} contenedor(es):")
+            
+            # --- VISTA DE RESULTADOS CON TARJETAS ---
+            for index, row in resultados.iterrows():
+                with st.container(border=True):
+                    c1, c2 = st.columns([1, 3])
+                    
+                    with c1:
+                        # MOSTRAR FOTO SI EXISTE
+                        if row.get('ruta_foto') and os.path.exists(row['ruta_foto']):
+                            st.image(row['ruta_foto'], use_container_width=True)
+                        else:
+                            # Si no hay foto, ponemos un icono gigante
+                            st.markdown(f"<h1 style='text-align: center;'>{obtener_icono(row['tipo'])}</h1>", unsafe_allow_html=True)
+                    
+                    with c2:
+                        st.subheader(f"{row['id']} - {row['tipo']}")
+                        st.caption(f"📍 {row['ubicacion']}")
+                        st.write(f"**Contiene:** {row['contenido']}")
+        else:
+            st.warning("No se encontró nada.")
+            
     else:
-        df_final = df_show
-        msg_result = "📋 Vista general del inventario"
-
-    st.caption(msg_result)
-
-    # --- TABLA AVANZADA (DATAFRAME) ---
-    st.dataframe(
-        df_final,
-        column_order=("id", "Visual_Tipo", "ubicacion", "contenido"), # Orden de columnas
-        column_config={
-            "id": st.column_config.TextColumn(
-                "Identificador",
-                help="ID único de la caja/bolsa",
-                width="small",
-                validate="^[A-Za-z0-9]+$"
-            ),
-            "Visual_Tipo": st.column_config.TextColumn(
-                "Tipo",
-                width="small"
-            ),
-            "ubicacion": st.column_config.TextColumn(
-                "📍 Ubicación",
-                width="medium"
-            ),
-            "contenido": st.column_config.TextColumn(
-                "📝 Contenido",
-                width="large"
-            ),
-        },
-        use_container_width=True,
-        hide_index=True,
-        height=400 # Altura fija para que se vea como app
-    )
+        # Si no busca nada, mostramos la tabla resumen simple
+        st.subheader("📋 Resumen General")
+        st.dataframe(
+            df[['id', 'tipo', 'ubicacion', 'contenido']], 
+            use_container_width=True, 
+            hide_index=True
+        )
