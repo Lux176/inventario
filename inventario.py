@@ -2,120 +2,186 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import time
 
-# --- CONFIGURACIÓN Y FUNCIONES DE GUARDADO ---
+# --- 1. CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(
+    page_title="Mi Inventario Pro",
+    page_icon="🏠",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --- 2. FUNCIONES DE PERSISTENCIA (JSON) ---
 ARCHIVO_DB = 'inventario_bodega.json'
 
 def cargar_datos():
-    """Carga la lista de diccionarios desde el archivo JSON si existe."""
     if os.path.exists(ARCHIVO_DB):
         try:
             with open(ARCHIVO_DB, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            return [] 
+            return []
     return []
 
 def guardar_datos(lista_inventario):
-    """Guarda la lista de diccionarios en el archivo JSON."""
     with open(ARCHIVO_DB, 'w', encoding='utf-8') as f:
         json.dump(lista_inventario, f, indent=4, ensure_ascii=False)
 
-# Configuración de página
-st.set_page_config(page_title="Inventario Permanente", layout="wide", page_icon="📦")
-st.title("📦 Inventario de Bodega")
-
-# --- CARGAR DATOS AL INICIO ---
+# Inicializar estado
 if 'inventario' not in st.session_state:
     st.session_state.inventario = cargar_datos()
 
-# --- BARRA LATERAL: GESTIÓN (REGISTRAR Y ELIMINAR) ---
+# --- 3. ESTILOS Y AYUDAS VISUALES ---
+def obtener_icono(tipo):
+    """Asigna un emoji según el tipo de contenedor"""
+    mapa = {
+        "Caja": "📦",
+        "Bolsa": "🛍️",
+        "Maleta": "🧳",
+        "Mueble": "🗄️",
+        "Otro": "🔖"
+    }
+    return mapa.get(tipo, "📦")
+
+# --- 4. BARRA LATERAL (CONTROLES) ---
 with st.sidebar:
-    st.header("Gestión de Inventario")
+    st.image("https://cdn-icons-png.flaticon.com/512/679/679720.png", width=50)
+    st.title("Gestión")
     
-    # Creamos dos pestañas para organizar las acciones
-    tab_agregar, tab_eliminar = st.tabs(["➕ Registrar", "🗑️ Eliminar"])
+    tab_add, tab_del = st.tabs(["➕ Nuevo", "🗑️ Borrar"])
     
-    # --- PESTAÑA 1: AGREGAR ---
-    with tab_agregar:
-        with st.form("nuevo_item", clear_on_submit=True):
-            id_input = st.text_input("ID Único (Ej: CAJA-01)", placeholder="Escribe el ID...")
-            tipo_input = st.selectbox("Tipo", ["Caja", "Bolsa", "Maleta", "Mueble", "Otro"])
-            contenido_input = st.text_area("Contenido", placeholder="Ej: Luces, esferas...")
-            ubicacion_input = st.text_input("Ubicación", placeholder="Ej: Estante 1")
+    # --- PESTAÑA AGREGAR ---
+    with tab_add:
+        st.write("Registra un nuevo bulto")
+        with st.form("form_agregar", clear_on_submit=True):
+            col_id, col_tipo = st.columns([1, 1])
+            with col_id:
+                id_input = st.text_input("ID", placeholder="Ej: C-01").upper()
+            with col_tipo:
+                tipo_input = st.selectbox("Tipo", ["Caja", "Bolsa", "Maleta", "Mueble", "Otro"])
             
-            enviar = st.form_submit_button("💾 Guardar")
+            ubicacion_input = st.text_input("📍 Ubicación", placeholder="Ej: Estante 2 - Nivel 3")
+            contenido_input = st.text_area("📝 Contenido", placeholder="Lista de objetos...", height=100)
             
-            if enviar:
+            btn_guardar = st.form_submit_button("Guardar Item", use_container_width=True)
+            
+            if btn_guardar:
                 if id_input and contenido_input:
                     ids_existentes = [item['id'] for item in st.session_state.inventario]
-                    
                     if id_input in ids_existentes:
-                        st.error(f"¡Error! El ID '{id_input}' ya existe.")
+                        st.error("⚠️ El ID ya existe.")
                     else:
-                        nuevo_item = {
+                        nuevo = {
                             "id": id_input,
                             "tipo": tipo_input,
                             "contenido": contenido_input,
-                            "ubicacion": ubicacion_input
+                            "ubicacion": ubicacion_input,
+                            "fecha": time.strftime("%Y-%m-%d") # Agregamos fecha de creación
                         }
-                        st.session_state.inventario.append(nuevo_item)
+                        st.session_state.inventario.append(nuevo)
                         guardar_datos(st.session_state.inventario)
-                        st.success(f"¡{id_input} guardado!")
-                        st.rerun() # Recargamos para actualizar tablas al instante
+                        st.toast(f"¡{id_input} guardado con éxito!", icon='✅')
+                        time.sleep(0.5)
+                        st.rerun()
                 else:
-                    st.warning("ID y Contenido son obligatorios.")
+                    st.toast("Faltan datos obligatorios", icon='❌')
 
-    # --- PESTAÑA 2: ELIMINAR ---
-    with tab_eliminar:
-        st.write("Selecciona la caja o bolsa que quieres dar de baja.")
-        
-        # Obtenemos la lista de IDs actuales
+    # --- PESTAÑA BORRAR ---
+    with tab_del:
+        st.write("Eliminar un bulto")
         lista_ids = [item['id'] for item in st.session_state.inventario]
         
         if lista_ids:
-            id_a_borrar = st.selectbox("Seleccionar ID:", lista_ids)
-            
-            # Botón con tipo 'primary' (rojo en algunos temas) para destacar peligro
-            if st.button("🗑️ Borrar Definitivamente", type="primary"):
-                # Filtramos la lista para quitar el elemento seleccionado
-                st.session_state.inventario = [
-                    item for item in st.session_state.inventario 
-                    if item['id'] != id_a_borrar
-                ]
-                # Guardamos la nueva lista (ya sin el elemento)
+            id_borrar = st.selectbox("Seleccionar ID", lista_ids)
+            if st.button("Eliminar Definitivamente", type="primary", use_container_width=True):
+                st.session_state.inventario = [x for x in st.session_state.inventario if x['id'] != id_borrar]
                 guardar_datos(st.session_state.inventario)
-                st.success(f"Se ha eliminado '{id_a_borrar}' del sistema.")
+                st.toast(f"Item {id_borrar} eliminado", icon='🗑️')
+                time.sleep(0.5)
                 st.rerun()
         else:
-            st.info("No hay nada que borrar por ahora.")
+            st.info("Nada que borrar.")
 
-# --- CUERPO PRINCIPAL: BUSCADOR Y TABLA ---
+    st.divider()
+    st.caption("v2.0 - Sistema de Bodega")
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    busqueda = st.text_input("🔍 Buscar objeto", placeholder="Escribe qué buscas...")
-with col2:
-    st.metric(label="Total de Bultos", value=len(st.session_state.inventario))
+# --- 5. PANEL PRINCIPAL ---
 
-st.divider()
+# Título y Header
+st.title("🏠 Inventario de Casa")
+st.markdown("---")
 
-if len(st.session_state.inventario) > 0:
+# Métricas (KPIs)
+if st.session_state.inventario:
     df = pd.DataFrame(st.session_state.inventario)
-    df.columns = ["ID", "Tipo", "Contenido", "Ubicación"]
+    
+    # Cálculos rápidos
+    total_bultos = len(df)
+    total_ubicaciones = df['ubicacion'].nunique()
+    ultimo_agregado = df.iloc[-1]['id'] if not df.empty else "N/A"
 
-    if busqueda:
-        filtro = df[
-            df['Contenido'].str.contains(busqueda, case=False, na=False) | 
-            df['ID'].str.contains(busqueda, case=False, na=False)
-        ]
-        if not filtro.empty:
-            st.success(f"Resultados encontrados: {len(filtro)}")
-            st.dataframe(filtro, use_container_width=True, hide_index=True)
-        else:
-            st.warning(f"No se encontró nada con '{busqueda}'.")
-    else:
-        st.subheader("📋 Inventario Completo")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    kpi1, kpi2, kpi3 = st.columns(3)
+    kpi1.metric("📦 Total Bultos", total_bultos)
+    kpi2.metric("📍 Ubicaciones", total_ubicaciones)
+    kpi3.metric("🕒 Último Agregado", ultimo_agregado)
 else:
-    st.info("El inventario está vacío. Usa el panel izquierdo para comenzar.")
+    st.info("👋 ¡Bienvenido! Empieza agregando cosas en el menú lateral.")
+
+st.write("") # Espacio
+
+# --- 6. BUSCADOR Y VISUALIZACIÓN ---
+col_search, col_filter = st.columns([3, 1])
+
+with col_search:
+    busqueda = st.text_input("🔍 ¿Qué estás buscando?", placeholder="Ej: Taladro, adornos, herramientas...")
+
+# Filtrado de datos
+if st.session_state.inventario:
+    df_show = pd.DataFrame(st.session_state.inventario)
+    
+    # Crear columna visual con Icono + Tipo
+    df_show['Visual_Tipo'] = df_show['tipo'].apply(lambda x: f"{obtener_icono(x)} {x}")
+
+    # Lógica de búsqueda
+    if busqueda:
+        mask = (
+            df_show['contenido'].str.contains(busqueda, case=False, na=False) | 
+            df_show['id'].str.contains(busqueda, case=False, na=False)
+        )
+        df_final = df_show[mask]
+        msg_result = f"✅ Se encontraron **{len(df_final)}** resultados"
+    else:
+        df_final = df_show
+        msg_result = "📋 Vista general del inventario"
+
+    st.caption(msg_result)
+
+    # --- TABLA AVANZADA (DATAFRAME) ---
+    st.dataframe(
+        df_final,
+        column_order=("id", "Visual_Tipo", "ubicacion", "contenido"), # Orden de columnas
+        column_config={
+            "id": st.column_config.TextColumn(
+                "Identificador",
+                help="ID único de la caja/bolsa",
+                width="small",
+                validate="^[A-Za-z0-9]+$"
+            ),
+            "Visual_Tipo": st.column_config.TextColumn(
+                "Tipo",
+                width="small"
+            ),
+            "ubicacion": st.column_config.TextColumn(
+                "📍 Ubicación",
+                width="medium"
+            ),
+            "contenido": st.column_config.TextColumn(
+                "📝 Contenido",
+                width="large"
+            ),
+        },
+        use_container_width=True,
+        hide_index=True,
+        height=400 # Altura fija para que se vea como app
+    )
